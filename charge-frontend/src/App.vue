@@ -41,7 +41,7 @@ export default {
 
     const refreshData = async () => {
       try {
-        const res = await fetch("http://localhost:3000/charges");
+        const res = await fetch("https://api.charge.wsss.fun/charges");
         const rawData = await res.json();
         processData(rawData);
       } catch (e) {

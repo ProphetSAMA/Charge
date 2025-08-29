@@ -3,12 +3,12 @@ const sqlite3 = require("sqlite3").verbose();
 const cors = require("cors");
 
 const app = express();
-const PORT = 3000;
+const PORT = 8006;
 
 app.use(cors());
 app.use(express.json());
 
-// 打开 SQLite 数据库（没有就新建）
+// 打开 SQLite 数据库
 const db = new sqlite3.Database("./charges.db", (err) => {
   if (err) console.error("打开数据库失败:", err.message);
   else console.log("已连接到 SQLite 数据库");
@@ -22,28 +22,35 @@ db.run(`
   )
 `);
 
-// 工具函数：格式化本地时间 YYYY-MM-DD HH:mm:ss
-function formatLocalDate(date) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  const h = String(date.getHours()).padStart(2, "0");
-  const min = String(date.getMinutes()).padStart(2, "0");
-  const s = String(date.getSeconds()).padStart(2, "0");
-  return `${y}-${m}-${d} ${h}:${min}:${s}`;
+// ✅ 手动获取北京时间（CST+8）
+function getCSTDateTime() {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000; // 转 UTC
+  const cst = new Date(utc + 8 * 3600 * 1000); // UTC+8
+
+  const Y = cst.getFullYear();
+  const M = String(cst.getMonth() + 1).padStart(2, '0');
+  const D = String(cst.getDate()).padStart(2, '0');
+  const h = String(cst.getHours()).padStart(2, '0');
+  const m = String(cst.getMinutes()).padStart(2, '0');
+  const s = String(cst.getSeconds()).padStart(2, '0');
+
+  return `${Y}-${M}-${D} ${h}:${m}:${s}`;
+}
+
+function getCSTDate() {
+  return getCSTDateTime().slice(0, 10); // YYYY-MM-DD
 }
 
 // 插入充电事件
 app.post("/charge", (req, res) => {
-  const localTime = formatLocalDate(new Date());
-  db.run(
-    `INSERT INTO charges (timestamp) VALUES (?)`,
-    [localTime],
-    function (err) {
-      if (err) return res.status(500).json({ success: false, error: err.message });
-      res.json({ success: true, id: this.lastID, time: localTime });
-    }
-  );
+  const localTime = getCSTDateTime();
+
+  db.run(`INSERT INTO charges (timestamp) VALUES (?)`, [localTime], function(err) {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+    console.log("检测到充电事件:", localTime);
+    res.json({ success: true, id: this.lastID, time: localTime });
+  });
 });
 
 // 查询所有充电事件
@@ -54,34 +61,63 @@ app.get("/charges", (req, res) => {
   });
 });
 
-// 获取最近7天每日充电次数
+// 最近7天每日充电次数
 app.get("/stats/weekly", (req, res) => {
-  db.all(
-    `
-    SELECT DATE(timestamp) as day, COUNT(*) as count
-    FROM charges
-    WHERE DATE(timestamp) >= DATE('now', '-6 days')
-    GROUP BY DATE(timestamp)
-    ORDER BY day ASC
-    `,
-    [],
-    (err, rows) => {
-      if (err) return res.status(500).json({ success: false, error: err.message });
+  const today = new Date();
+  const last7Days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const Y = d.getFullYear();
+    const M = String(d.getMonth() + 1).padStart(2, '0');
+    const D = String(d.getDate()).padStart(2, '0');
+    last7Days.push(`${Y}-${M}-${D}`);
+  }
 
-      // 补全可能缺失的日期
-      const result = [];
-      const now = new Date();
-      for (let i = 6; i >= 0; i--) {
-        const d = new Date(now);
-        d.setDate(now.getDate() - i);
-        const dateStr = formatLocalDate(d).slice(0, 10); // YYYY-MM-DD
-        const row = rows.find(r => r.day === dateStr);
-        result.push({ day: dateStr, count: row ? row.count : 0 });
-      }
+  db.all(`SELECT timestamp FROM charges ORDER BY timestamp ASC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
 
-      res.json(result);
-    }
-  );
+    const dailyCounts = {};
+    rows.forEach(r => {
+      const day = r.timestamp.slice(0, 10);
+      dailyCounts[day] = (dailyCounts[day] || 0) + 1;
+    });
+
+    const result = last7Days.map(day => ({
+      day,
+      count: dailyCounts[day] || 0
+    }));
+
+    res.json(result);
+  });
+});
+
+// 过去一年每日充电次数，用于热力图
+app.get("/stats/yearly", (req, res) => {
+  const today = new Date();
+  const yearAgo = new Date(today);
+  yearAgo.setFullYear(today.getFullYear() - 1);
+
+  const days = [];
+  for (let d = new Date(yearAgo); d <= today; d.setDate(d.getDate() + 1)) {
+    const Y = d.getFullYear();
+    const M = String(d.getMonth() + 1).padStart(2, '0');
+    const D = String(d.getDate()).padStart(2, '0');
+    days.push(`${Y}-${M}-${D}`);
+  }
+
+  db.all(`SELECT timestamp FROM charges ORDER BY timestamp ASC`, [], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+
+    const dailyCounts = {};
+    rows.forEach(r => {
+      const day = r.timestamp.slice(0, 10);
+      dailyCounts[day] = (dailyCounts[day] || 0) + 1;
+    });
+
+    const data = days.map(day => [day, dailyCounts[day] || 0]);
+    res.json(data);
+  });
 });
 
 app.listen(PORT, () => {
