@@ -1,11 +1,14 @@
 const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
+const cors = require("cors"); 
 
 const app = express();
 // 端口
 const PORT = 3000;
 
+// 允许所有来源访问
+app.use(cors());
 // 使用 JSON body
 app.use(express.json());
 

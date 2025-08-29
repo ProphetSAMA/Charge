@@ -1,30 +1,73 @@
-<script setup>
-import HelloWorld from './components/HelloWorld.vue'
-</script>
-
 <template>
-  <div>
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo" alt="Vite logo" />
-    </a>
-    <a href="https://vuejs.org/" target="_blank">
-      <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-    </a>
+  <div class="container">
+    <h1>充电次数统计</h1>
+    <button @click="loadToday">刷新今日数据</button>
+    <p>今日插电次数：<b>{{ todayCount }}</b></p>
+
+    <div ref="chartRef" class="chart"></div>
   </div>
-  <HelloWorld msg="Vite + Vue" />
 </template>
 
-<style scoped>
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
+<script setup>
+import { ref, onMounted } from "vue";
+import * as echarts from "echarts";
+import axios from "axios";
+
+const todayCount = ref(0);
+const chartRef = ref(null);
+let chartInstance = null;
+
+// 加载今日数据
+async function loadToday() {
+  try {
+    const res = await axios.get("http://localhost:3000/stats/today");
+    todayCount.value = res.data.today;
+    drawChart(todayCount.value);
+  } catch (err) {
+    console.error("获取数据失败", err);
+  }
 }
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
+
+function drawChart(value) {
+  if (!chartInstance) {
+    chartInstance = echarts.init(chartRef.value);
+  }
+  const option = {
+    title: {
+      text: "今日充电次数",
+      left: "center"
+    },
+    xAxis: {
+      type: "category",
+      data: ["今天"]
+    },
+    yAxis: {
+      type: "value"
+    },
+    series: [
+      {
+        data: [value],
+        type: "bar"
+      }
+    ]
+  };
+  chartInstance.setOption(option);
 }
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #42b883aa);
+
+onMounted(() => {
+  loadToday();
+});
+</script>
+
+<style>
+.container {
+  max-width: 600px;
+  margin: auto;
+  text-align: center;
+}
+.chart {
+  width: 100%;
+  height: 400px;
+  margin-top: 20px;
 }
 </style>
