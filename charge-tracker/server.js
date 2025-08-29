@@ -5,17 +5,13 @@ const cors = require("cors");
 const app = express();
 const PORT = 3000;
 
-// 中间件
 app.use(cors());
 app.use(express.json());
 
 // 打开 SQLite 数据库（没有就新建）
 const db = new sqlite3.Database("./charges.db", (err) => {
-  if (err) {
-    console.error("打开数据库失败:", err.message);
-  } else {
-    console.log("已连接到 SQLite 数据库");
-  }
+  if (err) console.error("打开数据库失败:", err.message);
+  else console.log("已连接到 SQLite 数据库");
 });
 
 // 初始化表
@@ -26,32 +22,34 @@ db.run(`
   )
 `);
 
-// 插入充电事件 (直接存本地时间)
-app.post("/charge", (req, res) => {
-  const now = new Date();
-  // 系统本地时间字符串 (yyyy-MM-dd HH:mm:ss 格式)
-  const localTime = now.toLocaleString("zh-CN", {
-    hour12: false,
-  }).replace(/\//g, "-");
+// 工具函数：格式化本地时间 YYYY-MM-DD HH:mm:ss
+function formatLocalDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const s = String(date.getSeconds()).padStart(2, "0");
+  return `${y}-${m}-${d} ${h}:${min}:${s}`;
+}
 
+// 插入充电事件
+app.post("/charge", (req, res) => {
+  const localTime = formatLocalDate(new Date());
   db.run(
     `INSERT INTO charges (timestamp) VALUES (?)`,
     [localTime],
     function (err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+      if (err) return res.status(500).json({ success: false, error: err.message });
       res.json({ success: true, id: this.lastID, time: localTime });
     }
   );
 });
 
-// 查询充电记录 (直接取出，不再转换)
+// 查询所有充电事件
 app.get("/charges", (req, res) => {
   db.all(`SELECT * FROM charges ORDER BY id DESC`, [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+    if (err) return res.status(500).json({ success: false, error: err.message });
     res.json(rows);
   });
 });
@@ -68,16 +66,15 @@ app.get("/stats/weekly", (req, res) => {
     `,
     [],
     (err, rows) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
+      if (err) return res.status(500).json({ success: false, error: err.message });
 
-      // 补全可能缺失的日期（比如某天没有充电事件）
+      // 补全可能缺失的日期
       const result = [];
+      const now = new Date();
       for (let i = 6; i >= 0; i--) {
-        const dateStr = new Date(Date.now() - i * 86400000)
-          .toISOString()
-          .slice(0, 10);
+        const d = new Date(now);
+        d.setDate(now.getDate() - i);
+        const dateStr = formatLocalDate(d).slice(0, 10); // YYYY-MM-DD
         const row = rows.find(r => r.day === dateStr);
         result.push({ day: dateStr, count: row ? row.count : 0 });
       }
@@ -87,8 +84,6 @@ app.get("/stats/weekly", (req, res) => {
   );
 });
 
-
-// 启动服务
 app.listen(PORT, () => {
   console.log(`服务器运行在 http://localhost:${PORT}`);
 });
