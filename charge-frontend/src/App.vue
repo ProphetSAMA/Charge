@@ -2,7 +2,7 @@
   <div class="app">
     <h1>⚡ 充电统计</h1>
     
-    <button @click="loadToday">刷新今日数据</button>
+    <button @click="refreshData">刷新数据</button>
 
     <!-- 今日充电次数 -->
     <div class="today">
@@ -31,17 +31,37 @@ export default {
     };
   },
   methods: {
-    async fetchWeekly() {
-      const res = await axios.get("http://localhost:3000/stats/weekly");
-      this.weeklyData = res.data;
-
-      // 今日次数
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const todayRow = this.weeklyData.find(d => d.day === todayStr);
-      this.todayCount = todayRow ? todayRow.count : 0;
-
-      this.renderWeeklyChart();
+    // 获取本地今天日期 YYYY-MM-DD
+    getTodayStr() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, "0");
+      const d = String(now.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
     },
+
+    // 刷新按钮统一调用
+    async refreshData() {
+      await this.fetchWeekly();
+      await this.fetchYearly();
+    },
+
+    // 拉取近7天数据
+    async fetchWeekly() {
+      try {
+        const res = await axios.get("http://localhost:3000/stats/weekly");
+        this.weeklyData = res.data;
+
+        const todayStr = this.getTodayStr();
+        const todayRow = this.weeklyData.find(d => d.day === todayStr);
+        this.todayCount = todayRow ? todayRow.count : 0;
+
+        this.renderWeeklyChart();
+      } catch (e) {
+        console.error("获取近7天数据失败:", e);
+      }
+    },
+
     renderWeeklyChart() {
       const chart = echarts.init(this.$refs.weeklyChart);
       const option = {
@@ -57,27 +77,34 @@ export default {
       };
       chart.setOption(option);
     },
+
+    // 拉取过去一年数据
     async fetchYearly() {
-      const res = await axios.get("http://localhost:3000/charges");
-      // 生成 GitHub 打卡数据
-      const dailyCounts = {};
-      res.data.forEach(r => {
-        const day = r.timestamp.slice(0,10);
-        dailyCounts[day] = (dailyCounts[day] || 0) + 1;
-      });
+      try {
+        const res = await axios.get("http://localhost:3000/charges");
+        const dailyCounts = {};
+        res.data.forEach(r => {
+          const day = r.timestamp.slice(0, 10);
+          dailyCounts[day] = (dailyCounts[day] || 0) + 1;
+        });
 
-      const today = new Date();
-      const yearAgo = new Date(today);
-      yearAgo.setFullYear(today.getFullYear() - 1);
+        const today = new Date();
+        const yearAgo = new Date(today);
+        yearAgo.setFullYear(today.getFullYear() - 1);
 
-      const calendarData = [];
-      for(let d = new Date(yearAgo); d <= today; d.setDate(d.getDate()+1)) {
-        const dayStr = d.toISOString().slice(0,10);
-        calendarData.push([dayStr, dailyCounts[dayStr] || 0]);
+        const calendarData = [];
+        for (let d = new Date(yearAgo); d <= today; d.setDate(d.getDate() + 1)) {
+          const dayStr = d.toISOString().slice(0, 10);
+          calendarData.push([dayStr, dailyCounts[dayStr] || 0]);
+        }
+
+        this.yearlyData = calendarData;
+        this.renderHeatmapChart();
+      } catch (e) {
+        console.error("获取过去一年数据失败:", e);
       }
-      this.yearlyData = calendarData;
-      this.renderHeatmapChart();
     },
+
     renderHeatmapChart() {
       const chart = echarts.init(this.$refs.heatmapChart);
       const option = {
@@ -85,8 +112,8 @@ export default {
         tooltip: {},
         visualMap: {
           min: 0,
-          max: Math.max(...this.yearlyData.map(d=>d[1])),
-          inRange: { color: ['#eeeeee','#3399ff'] }
+          max: Math.max(...this.yearlyData.map(d => d[1])),
+          inRange: { color: ['#eeeeee', '#3399ff'] }
         },
         calendar: {
           range: [new Date().getFullYear()],
@@ -102,8 +129,7 @@ export default {
     }
   },
   mounted() {
-    this.fetchWeekly();
-    this.fetchYearly();
+    this.refreshData(); // 初次加载数据
   }
 };
 </script>
@@ -121,5 +147,10 @@ export default {
 .today {
   font-size: 20px;
   margin-bottom: 20px;
+}
+button {
+  padding: 6px 12px;
+  margin-bottom: 20px;
+  cursor: pointer;
 }
 </style>
