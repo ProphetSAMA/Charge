@@ -1,58 +1,94 @@
 const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
-const path = require("path");
-const cors = require("cors"); 
+const cors = require("cors");
 
 const app = express();
-// 端口
 const PORT = 3000;
 
-// 允许所有来源访问
+// 中间件
 app.use(cors());
-// 使用 JSON body
 app.use(express.json());
 
-// 数据库初始化
-const dbPath = path.join(__dirname, "charge.db");
-const db = new sqlite3.Database(dbPath);
-
-db.serialize(() => {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS charges (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+// 打开 SQLite 数据库（没有就新建）
+const db = new sqlite3.Database("./charges.db", (err) => {
+  if (err) {
+    console.error("打开数据库失败:", err.message);
+  } else {
+    console.log("已连接到 SQLite 数据库");
+  }
 });
 
-// 插入充电事件
+// 初始化表
+db.run(`
+  CREATE TABLE IF NOT EXISTS charges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL
+  )
+`);
+
+// 插入充电事件 (直接存本地时间)
 app.post("/charge", (req, res) => {
-  db.run(`INSERT INTO charges (timestamp) VALUES (CURRENT_TIMESTAMP)`, function (err) {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json({ success: true, id: this.lastID });
-  });
-});
+  const now = new Date();
+  // 系统本地时间字符串 (yyyy-MM-dd HH:mm:ss 格式)
+  const localTime = now.toLocaleString("zh-CN", {
+    hour12: false,
+  }).replace(/\//g, "-");
 
-// 今日充电次数
-app.get("/stats/today", (req, res) => {
-  db.get(
-    `
-    SELECT COUNT(*) as count 
-    FROM charges 
-    WHERE DATE(timestamp) = DATE('now', 'localtime')
-    `,
-    [],
-    (err, row) => {
+  db.run(
+    `INSERT INTO charges (timestamp) VALUES (?)`,
+    [localTime],
+    function (err) {
       if (err) {
         return res.status(500).json({ error: err.message });
       }
-      res.json({ today: row.count });
+      res.json({ success: true, id: this.lastID, time: localTime });
     }
   );
 });
 
+// 查询充电记录 (直接取出，不再转换)
+app.get("/charges", (req, res) => {
+  db.all(`SELECT * FROM charges ORDER BY id DESC`, [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(rows);
+  });
+});
+
+// 获取最近7天每日充电次数
+app.get("/stats/weekly", (req, res) => {
+  db.all(
+    `
+    SELECT DATE(timestamp) as day, COUNT(*) as count
+    FROM charges
+    WHERE DATE(timestamp) >= DATE('now', '-6 days')
+    GROUP BY DATE(timestamp)
+    ORDER BY day ASC
+    `,
+    [],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+
+      // 补全可能缺失的日期（比如某天没有充电事件）
+      const result = [];
+      for (let i = 6; i >= 0; i--) {
+        const dateStr = new Date(Date.now() - i * 86400000)
+          .toISOString()
+          .slice(0, 10);
+        const row = rows.find(r => r.day === dateStr);
+        result.push({ day: dateStr, count: row ? row.count : 0 });
+      }
+
+      res.json(result);
+    }
+  );
+});
+
+
+// 启动服务
 app.listen(PORT, () => {
-  console.log(`服务运行在: http://localhost:${PORT}`);
+  console.log(`服务器运行在 http://localhost:${PORT}`);
 });
