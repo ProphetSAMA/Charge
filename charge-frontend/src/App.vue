@@ -1,156 +1,181 @@
 <template>
   <div class="app">
-    <h1>⚡ 充电统计</h1>
-    
+    <h1>⚡ 充电统计 ⚡</h1>
     <button @click="refreshData">刷新数据</button>
 
-    <!-- 今日充电次数 -->
-    <div class="today">
-      今日充电次数: {{ todayCount }}
+    <div class="today">今日充电次数: {{ todayCount }}</div>
+
+    <div class="heatmap-wrapper">
+      <div class="grid-wrapper">
+        <!-- 热力图格子 -->
+        <div class="heatmap-grid">
+          <div
+            v-for="(item, index) in heatmapData"
+            :key="item.date"
+            class="cell"
+            :class="'level-' + getLevel(item.count)"
+            :title="item.date + ': ' + item.count + ' 次'"
+          ></div>
+        </div>
+      </div>
     </div>
-
-    <!-- 近一周折线图 -->
-    <div ref="weeklyChart" class="chart"></div>
-
-    <!-- GitHub 风格热力日历 -->
-    <div ref="heatmapChart" class="chart"></div>
   </div>
 </template>
 
 <script>
-import * as echarts from "echarts";
-import axios from "axios";
+import { ref, onMounted } from "vue";
 
 export default {
   name: "App",
-  data() {
-    return {
-      todayCount: 0,
-      weeklyData: [],
-      yearlyData: []
-    };
-  },
-  methods: {
-    // 获取本地今天日期 YYYY-MM-DD
-    getTodayStr() {
-      const now = new Date();
-      const y = now.getFullYear();
-      const m = String(now.getMonth() + 1).padStart(2, "0");
-      const d = String(now.getDate()).padStart(2, "0");
+  setup() {
+    const todayCount = ref(0);
+    const heatmapData = ref([]);
+    const monthLabels = ref([]);
+
+    const getLocalDateStr = (date) => {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
       return `${y}-${m}-${d}`;
-    },
+    };
 
-    // 刷新按钮统一调用
-    async refreshData() {
-      await this.fetchWeekly();
-      await this.fetchYearly();
-    },
-
-    // 拉取近7天数据
-    async fetchWeekly() {
+    const refreshData = async () => {
       try {
-        const res = await axios.get("http://localhost:3000/stats/weekly");
-        this.weeklyData = res.data;
-
-        const todayStr = this.getTodayStr();
-        const todayRow = this.weeklyData.find(d => d.day === todayStr);
-        this.todayCount = todayRow ? todayRow.count : 0;
-
-        this.renderWeeklyChart();
+        const res = await fetch("http://localhost:3000/charges");
+        const rawData = await res.json();
+        processData(rawData);
       } catch (e) {
-        console.error("获取近7天数据失败:", e);
+        console.error("获取数据失败:", e);
       }
-    },
+    };
 
-    renderWeeklyChart() {
-      const chart = echarts.init(this.$refs.weeklyChart);
-      const option = {
-        title: { text: '近7天充电次数' },
-        xAxis: { type: 'category', data: this.weeklyData.map(d => d.day) },
-        yAxis: { type: 'value' },
-        series: [{
-          data: this.weeklyData.map(d => d.count),
-          type: 'line',
-          smooth: true,
-          areaStyle: {}
-        }]
-      };
-      chart.setOption(option);
-    },
+    const processData = (rawData) => {
+      // 统计每天次数
+      const dailyCounts = {};
+      rawData.forEach(item => {
+        const date = item.timestamp.slice(0, 10); // 本地时间字符串
+        dailyCounts[date] = (dailyCounts[date] || 0) + 1;
+      });
 
-    // 拉取过去一年数据
-    async fetchYearly() {
-      try {
-        const res = await axios.get("http://localhost:3000/charges");
-        const dailyCounts = {};
-        res.data.forEach(r => {
-          const day = r.timestamp.slice(0, 10);
-          dailyCounts[day] = (dailyCounts[day] || 0) + 1;
-        });
+      const today = new Date();
+      const yearAgo = new Date(today);
+      yearAgo.setFullYear(today.getFullYear() - 1);
 
-        const today = new Date();
-        const yearAgo = new Date(today);
-        yearAgo.setFullYear(today.getFullYear() - 1);
+      const data = [];
+      const months = [];
+      let lastMonth = null;
+      let colIndex = 1; // grid-column 从 1 开始
+      for (let d = new Date(yearAgo); d <= today; d.setDate(d.getDate() + 1)) {
+        const dateStr = getLocalDateStr(d);
+        data.push({ date: dateStr, count: dailyCounts[dateStr] || 0, day: d.getDay() });
 
-        const calendarData = [];
-        for (let d = new Date(yearAgo); d <= today; d.setDate(d.getDate() + 1)) {
-          const dayStr = d.toISOString().slice(0, 10);
-          calendarData.push([dayStr, dailyCounts[dayStr] || 0]);
+        // 记录月份的列位置（每月第一天）
+        const month = d.toLocaleString('default', { month: 'short' });
+        if (d.getDate() === 1) {
+          months.push({ name: month, position: colIndex });
         }
 
-        this.yearlyData = calendarData;
-        this.renderHeatmapChart();
-      } catch (e) {
-        console.error("获取过去一年数据失败:", e);
+        // 每周递增列索引，周日为7
+        if (d.getDay() === 6) colIndex++;
       }
-    },
 
-    renderHeatmapChart() {
-      const chart = echarts.init(this.$refs.heatmapChart);
-      const option = {
-        title: { text: '过去一年充电热力图' },
-        tooltip: {},
-        visualMap: {
-          min: 0,
-          max: Math.max(...this.yearlyData.map(d => d[1])),
-          inRange: { color: ['#eeeeee', '#3399ff'] }
-        },
-        calendar: {
-          range: [new Date().getFullYear()],
-          cellSize: ['20', '20']
-        },
-        series: [{
-          type: 'heatmap',
-          coordinateSystem: 'calendar',
-          data: this.yearlyData
-        }]
-      };
-      chart.setOption(option);
-    }
+      heatmapData.value = data;
+      monthLabels.value = months;
+      todayCount.value = dailyCounts[getLocalDateStr(today)] || 0;
+    };
+
+    const getLevel = (count) => {
+      if (count === 0) return 0;
+      if (count <= 2) return 1;
+      if (count <= 5) return 2;
+      if (count <= 10) return 3;
+      return 4;
+    };
+
+    onMounted(() => {
+      refreshData();
+    });
+
+    return { todayCount, heatmapData, monthLabels, refreshData, getLevel };
   },
-  mounted() {
-    this.refreshData(); // 初次加载数据
-  }
 };
 </script>
 
-<style scoped>
-.app {
+<style>
+/* 整体 body 深色 */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #0d1117; /* GitHub 深色模式背景 */
+  color: #c9d1d9;            /* 默认文字颜色 */
   font-family: Arial, sans-serif;
+}
+
+/* app 容器保持居中 */
+.app {
   padding: 20px;
+  max-width: 960px;
+  margin: 0 auto;
 }
-.chart {
-  width: 100%;
-  height: 300px;
-  margin-top: 20px;
-}
-.today {
-  font-size: 20px;
-  margin-bottom: 20px;
-}
+
+/* 按钮风格 */
 button {
   padding: 6px 12px;
   margin-bottom: 20px;
   cursor: pointer;
+  background-color: #161b22;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+button:hover {
+  background-color: #21262d;
+}
+
+/* 今日充电次数 */
+.today {
+  font-size: 20px;
+  margin-bottom: 20px;
+  color: #c9d1d9;
+}
+
+/* 热力图容器 */
+.heatmap-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.heatmap-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 14px;
+  grid-template-rows: repeat(7, 14px);
+  gap: 4px;
+}
+
+/* 热力图格子 */
+.cell {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background-color: #161b22; /* 空白格背景 */
+  transition: all 0.2s ease-in-out;
+}
+
+/* 热力等级颜色 */
+.cell.level-1 { background-color: #0c4424; }
+.cell.level-2 { background-color: #006d32; }
+.cell.level-3 { background-color: #26a641; }
+.cell.level-4 { background-color: #39d353; }
+
+/* 悬停效果优化 */
+.cell:hover {
+  transform: scale(1.2);
+  cursor: pointer;
+  /* GitHub 深色模式 hover glow */
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+  z-index: 10;
 }
 </style>
